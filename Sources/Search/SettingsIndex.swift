@@ -351,6 +351,10 @@ enum SettingsIndex {
         .init(id: "passkeys", group: "passwords", icon: "person.badge.key",
               title: "Offer passkeys", detail: "Touch ID or an iCloud passkey, on sites that offer one",
               keys: ["passkeys"], words: ["webauthn", "touch id"]),
+        .init(id: "passwords.pass", group: "passwords", icon: "terminal",
+              title: "Passwords from pass", detail: "Your password store's accounts and codes under their box, decrypted only when picked",
+              more: "Read from ~/.password-store, or PASSWORD_STORE_DIR, by the pass program. A site's accounts are those in a folder named for it. Never in private tabs; nothing is written to the store.",
+              keys: ["passwords.pass"], words: ["pass", "password store", "passwordstore", "gpg", "gnupg", "unix", "otp"]),
         .init(id: "passwords.apple", group: "apple", icon: "applelogo",
               title: "Passwords from Apple's Passwords app", detail: "Your Passwords app's accounts and verification codes under their box. Unofficial",
               more: "Search talks to the helper Apple made for its Chrome extension, as that extension. Never in private tabs.",
@@ -499,6 +503,7 @@ enum SettingsIndex {
         case "sidebar.foldIcons": return prefs.sidebar && !prefs.sideHides
         case "toolbar.left": return !prefs.sidebar
         case "profiles.oneWindow": return Profiles.shared.several
+        case "passwords.pass": return PassStore.here
         case "spaces.links": return prefs.usesSpaces
         case "tabs.frontBeside": return prefs.newTabPlace == .next
         case "newtab.recent": return prefs.floatingNewTab
@@ -515,6 +520,7 @@ enum SettingsIndex {
         case "sidebar.roomy": return "Only with titles in the column"
         case "sidebar.foldIcons": return "Only with the column down a side and not hidden until the edge"
         case "profiles.oneWindow": return "Only with more than one profile"
+        case "passwords.pass": return "Only with pass and a password store on this Mac"
         case "spaces.links": return "Only with Spaces on"
         case "sidebar.player": return "Only with titles in the sidebar"
         case "tabs.frontBeside": return "Only with New tab position on After current"

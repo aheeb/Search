@@ -26,7 +26,8 @@ struct AccountList: View {
             // there on admin.example.com without passing for admin's.
             ForEach(ownLogins) { loginRow($0) }
             ForEach(ownApple) { appleRow($0) }
-            if !(ownLogins.isEmpty && ownApple.isEmpty) && !(siteLogins.isEmpty && siteApple.isEmpty) {
+            ForEach(ownPass) { passRow($0) }
+            if !(ownLogins.isEmpty && ownApple.isEmpty && ownPass.isEmpty) && !(siteLogins.isEmpty && siteApple.isEmpty && sitePass.isEmpty) {
                 Text("Other accounts on \(Vault.registrable(asked.host))")
                     .font(.system(size: 10.5))
                     .foregroundStyle(Palette.faint)
@@ -37,9 +38,13 @@ struct AccountList: View {
             }
             ForEach(siteLogins) { loginRow($0) }
             ForEach(siteApple) { appleRow($0) }
+            ForEach(sitePass) { passRow($0) }
             ForEach(asked.codes) { code in
                 Row(mark: .symbol("number"), name: code.user.isEmpty ? "Verification code" : code.user,
                     detail: code.user.isEmpty ? "Apple Passwords" : "Verification code · Apple Passwords") { browser.choose(code) }
+            }
+            ForEach(asked.passCodes) { entry in
+                Row(mark: .symbol("number"), name: entry.name, detail: "Verification code · pass") { browser.chooseCode(entry) }
             }
             if asked.appleConnect {
                 Row(mark: .symbol("key.icloud"), name: "Connect Apple Passwords…",
@@ -89,6 +94,13 @@ struct AccountList: View {
     private var ownApple: [AppleLogin] { asked.apple.filter { owns($0) } }
     private var siteApple: [AppleLogin] { asked.apple.filter { !owns($0) } }
 
+    private var ownPass: [PassStore.Entry] { asked.pass.filter { ownsPass($0) } }
+    private var sitePass: [PassStore.Entry] { asked.pass.filter { !ownsPass($0) } }
+
+    private func ownsPass(_ entry: PassStore.Entry) -> Bool {
+        asked.passHost.map { PassStore.fits(entry.folder, $0) == 0 } ?? false
+    }
+
     private func owns(_ login: AppleLogin) -> Bool {
         asked.appleHost.map { ApplePasswords.belongs(login.sites, to: $0, wide: false) } ?? false
     }
@@ -105,23 +117,39 @@ struct AccountList: View {
             name: login.user.isEmpty ? "No name" : login.user, detail: "Apple Passwords") { browser.choose(login) }
     }
 
+    /// pass, when turned on (PassStore.swift): its name in the store, marked
+    /// as pass's.
+    private func passRow(_ entry: PassStore.Entry) -> some View {
+        Row(mark: .letter(entry.name.first.map { String($0).uppercased() } ?? "•"), name: entry.name, detail: "pass") {
+            browser.choose(entry)
+        }
+    }
+
+    /// Nothing from a place that keeps passwords: Search's, Apple's or pass.
+    private var noAccounts: Bool {
+        asked.logins.isEmpty && asked.apple.isEmpty && asked.codes.isEmpty && !asked.appleConnect
+            && asked.pass.isEmpty && asked.passCodes.isEmpty
+    }
+
     /// Nothing but the offer: no footer under it, the row says it all.
     private var offerOnly: Bool {
-        asked.appleOffer != nil && asked.logins.isEmpty && asked.passkeys.isEmpty && asked.apple.isEmpty && asked.codes.isEmpty && !asked.appleConnect
-            && asked.contacts.isEmpty
+        asked.appleOffer != nil && asked.passkeys.isEmpty && noAccounts && asked.contacts.isEmpty
     }
 
     /// Nothing but your card's rows.
     private var contactsOnly: Bool {
-        !asked.contacts.isEmpty && asked.logins.isEmpty && asked.passkeys.isEmpty && asked.apple.isEmpty && asked.codes.isEmpty
-            && !asked.appleConnect
+        !asked.contacts.isEmpty && asked.passkeys.isEmpty && noAccounts
     }
 
     private var footer: String {
         if contactsOnly { return "From your card in Contacts" }
-        if asked.logins.isEmpty && asked.apple.isEmpty && asked.codes.isEmpty && !asked.appleConnect { return "Passkeys on this Mac" }
-        if asked.logins.isEmpty { return "From Apple Passwords" }
-        return asked.apple.isEmpty ? "From your keychain" : "From your keychain and Apple Passwords"
+        if noAccounts { return "Passkeys on this Mac" }
+        var places: [String] = []
+        if !asked.logins.isEmpty { places.append("your keychain") }
+        if !asked.apple.isEmpty || !asked.codes.isEmpty || asked.appleConnect { places.append("Apple Passwords") }
+        if !asked.pass.isEmpty || !asked.passCodes.isEmpty { places.append("pass") }
+        return "From " + (places.count > 2 ? places.dropLast().joined(separator: ", ") + " and " + (places.last ?? "")
+                                            : places.joined(separator: " and "))
     }
 
     private enum Mark { case letter(String), symbol(String) }

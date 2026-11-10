@@ -883,6 +883,12 @@ final class Browser: NSObject, ObservableObject {
         /// offered on, which a pick has to find still up, origin and all.
         var box: Int?
         var page: URL?
+        /// Accounts from pass (PassStore.swift), by their names in the
+        /// store, and under a box for a code the same names for `pass otp`;
+        /// the page host they were matched to.
+        var pass: [PassStore.Entry] = []
+        var passCodes: [PassStore.Entry] = []
+        var passHost: String?
     }
     /// Set once you have picked, so the list doesn't come straight back for
     /// the box you are still in. Cleared when the caret leaves the boxes.
@@ -995,6 +1001,14 @@ final class Browser: NSObject, ObservableObject {
         // connect.
         let appleHost = prefs.applePasswords && prefs.fillsPasswords && passwords
             ? ApplePasswords.offers(on: tab.pageAddress, privateTab: tab.shy) : nil
+        // pass, when turned on: the names in the store's folder for the
+        // site, with nothing decrypted, and not one Search keeps already.
+        let passHost = prefs.passPasswords && prefs.fillsPasswords && passwords ? PassStore.offers(on: tab) : nil
+        let pass = passHost.map { host in
+            Array(PassStore.accounts(for: host, wide: wide)
+                .filter { entry in !known.contains { $0.user.caseInsensitiveCompare(entry.name) == .orderedSame } }
+                .prefix(5))
+        } ?? []
         let apple = applePasswords
         let connect = appleHost != nil && apple.state == .idle && applePairing?.tab != tab.id
         // Off, and nothing of Search's own for this site: the offer, once.
@@ -1020,21 +1034,22 @@ final class Browser: NSObject, ObservableObject {
             guard case .contact(let kind, _) = fill, prefs.fillsContacts, MeCard.allowed else { return [] }
             return MeCard.shared.offers(for: kind)
         }()
-        guard !known.isEmpty || !passkeys.isEmpty || connect || offer != nil || !contacts.isEmpty else {
+        guard !known.isEmpty || !passkeys.isEmpty || connect || offer != nil || !contacts.isEmpty || !pass.isEmpty else {
             suggesting = nil
             return
         }
         // What is under the pointer changed: the half second starts again.
         if let up = suggesting, up.tab == tab.id, up.logins == known, up.passkeys == passkeys, up.nameOnly == name,
            up.appleConnect == connect, up.apple.isEmpty, up.wide == wide, up.appleOffer == offer,
-           up.contacts == contacts, up.box == box,
+           up.contacts == contacts, up.box == box, up.pass == pass,
            up.page == (contacts.isEmpty ? nil : tab.pageAddress) {
             suggesting?.spot = spot
             return
         }
         suggesting = Suggesting(tab: tab.id, spot: spot, logins: known, passkeys: passkeys, host: host, clear: inTheClear,
                                 nameOnly: name, appleHost: appleHost, appleConnect: connect, appleOffer: offer, wide: wide,
-                                contacts: contacts, box: box, page: contacts.isEmpty ? nil : tab.pageAddress)
+                                contacts: contacts, box: box, page: contacts.isEmpty ? nil : tab.pageAddress,
+                                pass: pass, passHost: passHost)
         if let offer { applePasswordsOffer.shown(on: offer) }
     }
 
@@ -1047,10 +1062,17 @@ final class Browser: NSObject, ObservableObject {
     /// row of its own for a box that may be something else.
     private func hangCodes(from tab: Tab, _ spot: CGRect, host: String, wide: Bool) {
         appleAsk += 1
+        // pass's accounts for the site, whether they hold a code or not:
+        // that is only known by decrypting, which waits for a pick.
+        let passHost = prefs.passPasswords && prefs.fillsPasswords ? PassStore.offers(on: tab) : nil
+        let passCodes = passHost.map { Array(PassStore.accounts(for: $0, wide: wide).prefix(5)) } ?? []
+        let passOnly: Suggesting? = passCodes.isEmpty ? nil
+            : Suggesting(tab: tab.id, spot: spot, logins: [], host: host, clear: false, wide: wide,
+                         passCodes: passCodes, passHost: passHost)
         guard prefs.applePasswords, prefs.fillsPasswords,
               let appleHost = ApplePasswords.offers(on: tab.pageAddress, privateTab: tab.shy)
         else {
-            suggesting = nil
+            suggesting = passOnly
             return
         }
         let apple = applePasswords
@@ -1060,11 +1082,11 @@ final class Browser: NSObject, ObservableObject {
             lookUpCodes(appleHost, in: tab, host: host, wide: wide)
         }
         guard wide, apple.state == .idle, applePairing?.tab != tab.id else {
-            suggesting = nil
+            suggesting = passOnly
             return
         }
         suggesting = Suggesting(tab: tab.id, spot: spot, logins: [], host: host, clear: false,
-                                appleHost: appleHost, appleConnect: true)
+                                appleHost: appleHost, appleConnect: true, passCodes: passCodes, passHost: passHost)
     }
 
     /// Asks Apple's helper whose codes it keeps for the page, and hangs them
@@ -1081,8 +1103,11 @@ final class Browser: NSObject, ObservableObject {
             else { return }
             let codes = Array(found.filter { ApplePasswords.belongs([$0.domain], to: appleHost, wide: wide) }.prefix(5))
             guard !codes.isEmpty else { return }
+            // pass's, already up under the box, stay.
+            let pass = suggesting?.tab == tab.id ? suggesting : nil
             suggesting = Suggesting(tab: tab.id, spot: field.spot, logins: [], host: host, clear: false,
-                                    codes: codes, appleHost: appleHost, wide: wide)
+                                    codes: codes, appleHost: appleHost, wide: wide,
+                                    passCodes: pass?.passCodes ?? [], passHost: pass?.passHost)
         }
     }
 
@@ -1207,6 +1232,76 @@ final class Browser: NSObject, ObservableObject {
         }
     }
 
+    /// One of pass's accounts, picked by name. Its file is decrypted now,
+    /// its password and name put into the page if it is still the page it
+    /// was offered on, and nothing of it kept.
+    func choose(_ entry: PassStore.Entry) {
+        lowering?.cancel()
+        guard let list = suggesting, let tab = tabs.first(where: { $0.id == list.tab }), let passHost = list.passHost else { return }
+        guard Date().timeIntervalSince(list.shown) > 0.5 else { return }
+        suggesting = nil
+        guard PassStore.offers(on: tab) == passHost, PassStore.fits(entry.folder, passHost, wide: list.wide) != nil,
+              let page = passPage(tab) else { return }
+        pickedInto = tab.id
+        Task { [weak self] in
+            let found = await PassStore.show(entry)
+            guard let self else { return }
+            guard let found else {
+                announce("pass didn't hand that password over")
+                return
+            }
+            // gpg can take a while: the page must still be the one it was
+            // offered on, and in front.
+            guard tabs.contains(where: { $0 === tab }), tab.id == activeID, PassStore.offers(on: tab) == passHost else { return }
+            if list.nameOnly {
+                tab.fillName(found.login) { [weak self] worked in
+                    if !worked { self?.announce("Couldn't find the sign-in fields anymore") }
+                }
+                return
+            }
+            // Kept in pass already: not offered to save again.
+            tab.appleFill = AppleFill(host: passHost, user: found.login, password: found.password)
+            tab.fill(user: found.login, password: found.password, onlyOn: page) { [weak self] worked in
+                if !worked { self?.announce("Couldn't find the sign-in fields anymore") }
+            }
+        }
+    }
+
+    /// One of pass's accounts under a box for a code: `pass otp` for it
+    /// now, into the box if the page is still the one, and not kept.
+    func chooseCode(_ entry: PassStore.Entry) {
+        lowering?.cancel()
+        guard let list = suggesting, let tab = tabs.first(where: { $0.id == list.tab }), let passHost = list.passHost else { return }
+        guard Date().timeIntervalSince(list.shown) > 0.5 else { return }
+        suggesting = nil
+        guard PassStore.offers(on: tab) == passHost, PassStore.fits(entry.folder, passHost, wide: list.wide) != nil,
+              let page = passPage(tab) else { return }
+        pickedInto = tab.id
+        Task { [weak self] in
+            let value = await PassStore.otp(entry)
+            guard let self else { return }
+            guard let value else {
+                announce("No verification code for that account in pass")
+                return
+            }
+            guard tabs.contains(where: { $0 === tab }), tab.id == activeID, PassStore.offers(on: tab) == passHost else { return }
+            tab.fillCode(value, onlyOn: page) { [weak self] worked in
+                if !worked { self?.announce("Couldn't find the box for the code anymore") }
+            }
+        }
+    }
+
+    /// The page pass's accounts are filled on: the tab's own scheme and
+    /// host, checked again in the page (Tab.fill).
+    private func passPage(_ tab: Tab) -> URL? {
+        guard let url = tab.committed, let scheme = url.scheme, let host = url.host() else { return nil }
+        var parts = URLComponents()
+        parts.scheme = scheme
+        parts.host = host
+        parts.path = "/"
+        return parts.url
+    }
+
     /// The row that connects Apple Passwords: the pairing starts, and the
     /// code is typed into a small card of Search's own where the list was,
     /// not in Settings. Once paired, the caret goes back to the box and the
@@ -1241,7 +1336,7 @@ final class Browser: NSObject, ObservableObject {
         offerAnswered = true
         list.appleOffer = nil
         let empty = list.logins.isEmpty && list.passkeys.isEmpty && list.apple.isEmpty && !list.appleConnect
-            && list.contacts.isEmpty
+            && list.contacts.isEmpty && list.pass.isEmpty && list.passCodes.isEmpty
         suggesting = empty ? nil : list
     }
 

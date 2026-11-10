@@ -410,6 +410,11 @@ final class Preferences: ObservableObject {
     @Published var applePasswords: Bool {
         didSet { store.set(applePasswords, forKey: "passwords.apple") }
     }
+    /// Accounts from pass, the password store, under the sign-in box too
+    /// (PassStore.swift). Off unless turned on.
+    @Published var passPasswords: Bool {
+        didSet { store.set(passPasswords, forKey: "passwords.pass") }
+    }
     /// The first launch has been walked through. Until then the welcome
     /// stands over the window.
     @Published var welcomed: Bool {
@@ -865,6 +870,7 @@ final class Preferences: ObservableObject {
         savesPasswords = store.object(forKey: "passwords.save") as? Bool ?? true
         fillsPasswords = store.object(forKey: "passwords.fill") as? Bool ?? true
         applePasswords = store.bool(forKey: "passwords.apple")
+        passPasswords = store.bool(forKey: "passwords.pass")
         let contacts = store.bool(forKey: "contacts.fill")
         fillsContacts = contacts
         FormRelay.contacts = contacts
