@@ -2262,7 +2262,9 @@ final class Bench {
             // Every account this world keeps, by name, without a secret.
             let users = Vault.all().map(\.user)
             guard let list = browser.suggesting else { answer(["shown": false, "offer": offer, "kept": users.count, "users": users]); return }
+            // pass's rows after Search's own, by their names in the store.
             let rows = list.passkeys.map { ["passkey": $0.name] } + list.logins.map { ["login": $0.user] }
+                + list.pass.map { ["pass": $0.name] } + list.passCodes.map { ["passCode": $0.name] }
             if let press = request["press"] as? [Double], press.count == 2 {
                 // A press and a release at a point of the window, from its
                 // top-left, handed to whatever the window says is there — the
@@ -2287,7 +2289,11 @@ final class Bench {
             }
             if let pick = request["pick"] as? Int {
                 guard rows.indices.contains(pick) else { answer(["error": "no row \(pick)"]); return }
-                if pick < list.passkeys.count { browser.choose(list.passkeys[pick]) } else { browser.choose(list.logins[pick - list.passkeys.count]) }
+                let logins = list.passkeys.count + list.logins.count, pass = logins + list.pass.count
+                if pick < list.passkeys.count { browser.choose(list.passkeys[pick]) }
+                else if pick < logins { browser.choose(list.logins[pick - list.passkeys.count]) }
+                else if pick < pass { browser.choose(list.pass[pick - logins]) }
+                else { browser.chooseCode(list.passCodes[pick - pass]) }
             }
             var out: [String: Any] = ["shown": true, "rows": rows, "nameOnly": list.nameOnly, "wide": list.wide, "offer": offer, "kept": users.count,
                                       "users": users, "spot": [list.spot.minX, list.spot.minY, list.spot.width, list.spot.height]]
@@ -2321,6 +2327,19 @@ final class Bench {
                     "lights": (browser.window ?? Links.window).map(Bench.lights(of:)) ?? [],
                 ])
             }
+
+        case "passstore":
+            // pass under the sign-in box (PassStore.swift), with a store and
+            // a keyring of the test's own: "folder" and "keyring", "on" as
+            // Settings' switch. Test runs only, and never the real store: the
+            // answer says which accounts the store has by name, nothing more.
+            guard Store.testing else { answer(["error": "passstore only works on a --test run"]); return }
+            if let folder = request["folder"] as? String { PassStore.testFolder = URL(fileURLWithPath: folder, isDirectory: true) }
+            if let keyring = request["keyring"] as? String { PassStore.testKeyring = URL(fileURLWithPath: keyring, isDirectory: true) }
+            if let on = request["on"] as? Bool { browser.prefs.passPasswords = on }
+            answer(["on": browser.prefs.passPasswords, "here": PassStore.here,
+                    "test": PassStore.testFolder != nil,
+                    "entries": PassStore.testFolder.map { PassStore.entries(in: $0).map(\.path) } ?? []])
 
         case "appleoffer":
             // "Use your Apple passwords?" under a sign-in box (ApplePasswordsOffer),
