@@ -53,6 +53,13 @@ final class Updater: ObservableObject {
         Store.testing && ProcessInfo.processInfo.environment["SEARCH_FEED"] != nil
     }
 
+    /// Whether this build asks the feed at all: Office Commun's own, by the
+    /// team that signed it, or a test run with a feed of its own. A build
+    /// made from a fork is signed by somebody else, and nothing the feed
+    /// names can be swapped in under it (see Swap.verify), so it doesn't
+    /// ask. It is updated the way it was made, from its source.
+    static let asks: Bool = overridden || Swap.teamID(of: Bundle.main.bundleURL) == team
+
     struct Release: Equatable {
         let version: String
         let build: Int
@@ -166,6 +173,10 @@ final class Updater: ObservableObject {
             return
         default: break
         }
+        guard Updater.asks else {
+            say?("This Search was built here. It is updated from its source")
+            return
+        }
         guard !checking else { return }
         say?("Checking for updates…")
         check { [weak self] found in
@@ -179,6 +190,7 @@ final class Updater: ObservableObject {
     /// names, or nil when this is the latest; what becomes of it after that
     /// is said through the line handed to `checkIfDue`.
     func check(then done: @escaping (Release?) -> Void) {
+        guard Updater.asks else { done(nil); return }
         guard !checking else { return }
         checking = true
         Task { [weak self] in
@@ -563,7 +575,7 @@ private enum Swap {
 
     /// The team that signed a bundle, as the system reads it — nil for an
     /// ad-hoc signature, or none.
-    private static func teamID(of bundle: URL) -> String? {
+    static func teamID(of bundle: URL) -> String? {
         var code: SecStaticCode?
         guard SecStaticCodeCreateWithPath(bundle as CFURL, [], &code) == errSecSuccess, let code else {
             return nil

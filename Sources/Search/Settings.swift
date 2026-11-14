@@ -993,6 +993,7 @@ struct SettingsPanel: View {
     private var versionDetail: String {
         switch updater.stage {
         case .none:
+            guard Updater.asks else { return "This one was built here, and is updated from its source" }
             return updater.lastChecked.map { "Checked \($0.formatted(.relative(presentation: .named))), every hour on its own" }
                 ?? "Checked every hour on its own"
         case .fetching(let next):
@@ -1010,12 +1011,14 @@ struct SettingsPanel: View {
     private var versionControl: some View {
         switch updater.stage {
         case .none:
-            Pill(updater.checking ? "Checking…" : "Check now") {
-                updater.check { found in
-                    if found == nil { browser.announce("This is the latest one") }
+            if Updater.asks {
+                Pill(updater.checking ? "Checking…" : "Check now") {
+                    updater.check { found in
+                        if found == nil { browser.announce("This is the latest one") }
+                    }
                 }
+                .disabled(updater.checking)
             }
-            .disabled(updater.checking)
         case .fetching:
             Ring(size: 12)
         case .ready:
